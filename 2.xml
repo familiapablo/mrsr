@@ -8,6 +8,7 @@
 <meta charset="utf-8"/>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Mr Chel</title>
 <link rel="shortcut icon" href="https://cdn.jsdelivr.net/gh/familiapablo/mrsr@main/TemplateData/favicon.ico"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/familiapablo/mrsr@main/TemplateData/style.css"/>
 <style>
@@ -123,18 +124,69 @@ html, body {
 </div>
 
 <script>
-var CDN_BASE = "https://cdn.jsdelivr.net/gh/familiapablo/mrsr@main/Build"; 
+// ==================== CDN AYARLARI ====================
+var CDN_BASE = "https://cdn.jsdelivr.net/gh/familiapablo/mrsr@main/Build";
 
-// Part bilgileri - PowerShell ile hesaplanan değerler
+// Part bilgileri
 var FILE_PARTS = {
-  "Build.data.br": {
-    parts: 3,  // 21.5 MB / 8 MB = 2.69 -> 3 part
-    totalSize: 22544384  // yaklaşık byte
+  "Build.data.br": { parts: 3, totalSize: 22544384 },
+  "Build.wasm.br": { parts: 5, totalSize: 39636173 }
+};
+
+// ==================== GLOBAL PLAYER OBJESİ ====================
+// Bu obje GLOBAL olmalı - Unity framework bunu arıyor
+var player = {
+  getData: function(keys) {
+    console.log("player.getData called", keys);
+    try {
+      var saved = localStorage.getItem("gameData");
+      if (saved) {
+        return Promise.resolve(JSON.parse(saved));
+      }
+    } catch(e) {
+      console.log("getData error:", e);
+    }
+    return Promise.resolve({});
   },
-  "Build.wasm.br": {
-    parts: 5,  // 37.8 MB / 8 MB = 4.73 -> 5 part
-    totalSize: 39636173  // yaklaşık byte
-  }
+  setData: function(data, flush) {
+    console.log("player.setData called", data);
+    try {
+      localStorage.setItem("gameData", JSON.stringify(data));
+    } catch(e) {
+      console.log("setData error:", e);
+    }
+    return Promise.resolve();
+  },
+  getStats: function(keys) {
+    console.log("player.getStats called", keys);
+    try {
+      var saved = localStorage.getItem("gameStats");
+      if (saved) {
+        return Promise.resolve(JSON.parse(saved));
+      }
+    } catch(e) {
+      console.log("getStats error:", e);
+    }
+    return Promise.resolve({});
+  },
+  setStats: function(data) {
+    console.log("player.setStats called", data);
+    try {
+      localStorage.setItem("gameStats", JSON.stringify(data));
+    } catch(e) {
+      console.log("setStats error:", e);
+    }
+    return Promise.resolve();
+  },
+  incrementStats: function(data) {
+    console.log("player.incrementStats called", data);
+    return Promise.resolve();
+  },
+  getMode: function() { return "lite"; },
+  getName: function() { return "Player"; },
+  getPhoto: function(size) { return ""; },
+  getUniqueID: function() { return "guest_" + Date.now(); },
+  getIDsPerGame: function() { return Promise.resolve([]); }
 };
 
 // ==================== FAKE YANDEX SDK ====================
@@ -178,19 +230,10 @@ window.ysdk = {
     showBannerAdv: function() { return Promise.resolve(); },
     hideBannerAdv: function() { return Promise.resolve(); }
   },
+  // getPlayer artık GLOBAL player objesini döndürüyor
   getPlayer: function(options) {
-    return Promise.resolve({
-      getMode: function() { return "lite"; },
-      getData: function(keys) { return Promise.resolve({}); },
-      setData: function(data, flush) { return Promise.resolve(); },
-      getStats: function(keys) { return Promise.resolve({}); },
-      setStats: function(data) { return Promise.resolve(); },
-      incrementStats: function(data) { return Promise.resolve(); },
-      getName: function() { return "Player"; },
-      getPhoto: function(size) { return ""; },
-      getUniqueID: function() { return "guest_" + Date.now(); },
-      getIDsPerGame: function() { return Promise.resolve([]); }
-    });
+    console.log("ysdk.getPlayer called");
+    return Promise.resolve(player);
   },
   getPayments: function(options) {
     return Promise.resolve({
@@ -280,7 +323,6 @@ async function downloadAndMergeFile(fileName) {
     parts.push(part);
   }
   
-  // Parçaları birleştir
   var totalLength = parts.reduce(function(sum, part) { return sum + part.byteLength; }, 0);
   var merged = new Uint8Array(totalLength);
   var offset = 0;
@@ -302,7 +344,6 @@ async function createBlobUrl(fileName) {
 
 // ==================== GAME VARIABLES ====================
 var myGameInstance = null;
-var player = null;
 var playerData = "{}";
 var needSend = false;
 var fullscreenOpened = false;
@@ -370,6 +411,23 @@ function ShowRewarded() {
   }
 }
 
+// ==================== SAVE/LOAD FUNCTIONS (Global) ====================
+// Unity bunları doğrudan çağırabilir
+function SaveData(data) {
+  console.log("SaveData called:", data);
+  if (player && player.setData) {
+    player.setData(data, true);
+  }
+}
+
+function LoadData() {
+  console.log("LoadData called");
+  if (player && player.getData) {
+    return player.getData();
+  }
+  return Promise.resolve({});
+}
+
 function setActive() {
   isActive = true;
   window.removeEventListener('keydown', setActive);
@@ -411,7 +469,6 @@ async function loadGame() {
     loadingStatus.textContent = "Downloading game files...";
     loadingDetail.textContent = "This may take a moment...";
     
-    // Parçalı dosyaları indir ve birleştir
     console.log("Starting file download and merge...");
     
     var dataBlobUrl = await createBlobUrl("Build.data.br");
@@ -424,7 +481,6 @@ async function loadGame() {
     loadingDetail.textContent = "Almost ready...";
     progressBarFull.style.width = "100%";
     
-    // Unity config - blob URL'leri kullan
     var config = {
       arguments: [],
       dataUrl: dataBlobUrl,
@@ -437,12 +493,10 @@ async function loadGame() {
       showBanner: unityShowBanner,
     };
     
-    // Unity loader'ı yükle
     var script = document.createElement("script");
     script.src = loaderUrl;
     script.onload = function() {
       createUnityInstance(canvas, config, function(progress) {
-        // Unity kendi yükleme progressi
         var totalProgress = 50 + (progress * 50);
         progressBarFull.style.width = totalProgress + "%";
         loadingDetail.textContent = "Loading... " + Math.round(progress * 100) + "%";
@@ -452,11 +506,9 @@ async function loadGame() {
         window.gameInstance = unityInstance;
         gameReady = true;
         
-        // Blob URL'leri temizle (memory leak önleme)
         URL.revokeObjectURL(dataBlobUrl);
         URL.revokeObjectURL(wasmBlobUrl);
         
-        // Skip butonunu göster
         loadingStatus.textContent = "Ready!";
         loadingDetail.textContent = "";
         skipButton.style.display = "block";
@@ -464,11 +516,7 @@ async function loadGame() {
         
         if (needSend) {
           try {
-            if (player && playerData) {
-              myGameInstance.SendMessage('InitObject', 'OnInit', playerData);
-            } else {
-              myGameInstance.SendMessage('InitObject', 'OnInitNoPlayer', 'desktop');
-            }
+            myGameInstance.SendMessage('InitObject', 'OnInit', '{}');
           } catch(e) {
             console.log("needSend message failed:", e);
           }
